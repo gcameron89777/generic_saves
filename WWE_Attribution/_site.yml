@@ -1,0 +1,16 @@
+title: "WWE Extreme Attribution"
+output:
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+toc_depth: 1
+navbar:
+  title: "WWE Extreme Attribution"
+  type: default
+  left:
+    - text: "Home"
+      href: index.html
+    - text: "August Activity"
+      href: "August.html"

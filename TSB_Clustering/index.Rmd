@@ -1,0 +1,313 @@
+---
+title: "TSB Userbase Clustering"
+output:
+  html_document:
+    df_print: kable
+toc: true
+toc_float: true
+toc_collapsed: true
+toc_depth: 1
+---
+  
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Goal of Analysis
+...
+
+```{r startup, echo=F, results = 'hide', message=F, cache=F}
+setwd("~/TSB_Clustering/radhoc/TSB_Clustering")
+library(DBI)
+library(odbc)
+library(tidyverse)
+library(dbplyr)
+library(lubridate)
+library(foreach)
+library(doParallel) # includes package just parallel
+
+# conflicts
+select <- dplyr::select
+
+
+# source query and get dataframe
+# con <- dbConnect(odbc(), "Athena")
+# source("queries.r")
+# userbase <- dbGetQuery(con, tsb_query)
+# saveRDS(userbase, "rds_files/userbase.rds")
+```
+
+# Preprocessing
+
+```{r pp_loop, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+userbase <- readRDS("rds_files/userbase.rds") %>% mutate_at(vars(tenure_days, avg_daily_sessions), as.numeric) # last saved and as off August 15th 2019
+
+# split into chunks for preprocessing because r's memory
+# userbase <- sample_n(userbase, 500000) # for debugging only
+chunk <- 100000
+n <- nrow(userbase)
+r  <- rep(1:ceiling(n / chunk), each = chunk, length.out = nrow(userbase) )[1:n]
+d <- split(userbase, r)
+
+# parallel processing
+library(foreach)
+library(doParallel) # includes package just parallel
+cl<-makeCluster(parallel::detectCores() - 1) # setup parallel backend to use all available processors minus 1
+registerDoParallel(cl)
+
+
+pdata <- foreach(i = 1:length(d), .packages = c("tidyverse", "lubridate")) %dopar% {
+  
+  print(i)
+  p <-  d[[i]] %>% 
+  mutate(install_dt = ymd(install_dt)) %>% 
+  # mutate_at(vars(tenure_days, avg_daily_sessions), as.numeric) %>% 
+  mutate_at(vars(veteran:ltv_7d), as.numeric) %>%
+  mutate(ltv_7d = ltv_7d / 100) %>% 
+  replace(is.na(.), 0) %>% 
+  
+  # split countries into broad regions
+  mutate(region = if_else(country %in% c("United States", "Canada"), "USA_Canada", "ROW")) %>%
+
+  # parse out map fields
+
+  ## map of spent
+  mutate(map_of_spent = str_remove_all(map_of_spent, "\\{|\\}") %>% str_split(., ",\\s")) %>%
+  unnest() %>%
+  separate(col = map_of_spent, into = c("hc_category", "hc_value"), sep = "=") %>%
+  mutate(hc_category = str_trim(hc_category, "both"),
+         hc_value = as.numeric(hc_value)) %>%
+  spread(hc_category, hc_value, sep = ".") %>%
+
+  ## map of started
+  mutate(map_of_started = str_remove_all(map_of_started, "\\{|\\}") %>% str_split(., ",\\s")) %>%
+  unnest() %>%
+  separate(col = map_of_started, into = c("competition", "competition_value"), sep = "=") %>%
+  mutate(competition = str_trim(competition, "both"),
+         competition_value = as.numeric(competition_value)) %>%
+  spread(competition, competition_value, sep = ".")  %>%
+
+  # get rid of NAs from spreading
+  replace(is.na(.), 0)
+
+  # iter <- paste0("pdata", i)
+  # saveRDS(p, paste0("rds_files/pdata_loop/", iter, ".rds"))
+  #
+  # return(1)
+  return(p)
+}
+
+# read in iterations and combine
+# iters <- list.files("rds_files/pdata_loop", full.names = T)
+# pdata_list <- foreach(i = iters) %dopar% {
+#   readRDS(i)
+# }
+stopCluster(cl)
+pdata <- bind_rows(pdata) %>% replace(is.na(.), 0)
+
+saveRDS(pdata, "rds_files/pdata.rds")
+
+```
+
+```{r pp, echo=FALSE, message=FALSE, warning=FALSE}
+
+pdata <- readRDS("rds_files/pdata.rds")
+
+# hot encode categoricals
+for(r in unique(pdata$region)) {
+  pdata[paste0("region.", r)] <- ifelse(pdata$region == r, 1, 0)
+}
+
+for(c in unique(pdata$marketing_channel)) {
+  pdata[paste0("channel.", c)] <- ifelse(pdata$marketing_channel == c, 1, 0)
+}
+
+# clustering vars (remove redundant vars) and then scale
+cdata <- pdata %>% 
+  select_at(vars(s:marketing_channel, region, region.ROW:channel.organic, everything())) %>% # get non numeric then numeric vars in that order
+  select_at(vars(region.USA_Canada, channel.paid, tenure_days:competition.TOWER_GAME_STARTED)) %>% 
+  select(-c(cumulative_revenue, hc_category.0, competition.0, club_member, channel.paid)) %>% # remove vip from clustering, want to see if vips are spread out based on clustering of other variables
+  lapply(function(x) {(x - min(x)) / (max(x) - min(x))}) %>% 
+  as.data.frame()
+
+glimpse(pdata)
+```
+
+# Exploratory Analysis
+## Data Summary
+### VIPS
+```{r exp_vips, echo=FALSE, message=FALSE, warning=FALSE}
+pdata %>% group_by(vip) %>% summarise(n = n()) %>% mutate(pct = n / sum(.$n)) %>% print() # VIPs make up ~5% of userbase
+pdata %>% group_by(region) %>% summarise(n = n()) %>% mutate(pct = n / sum(.$n)) %>% print() # 96% of installs are USA Canada
+
+# hc spend distribution
+hc_spend_pct <- pdata %>% select_at(vars(matches("hc_category"))) %>% lapply(mean) %>% as.data.frame() %>% 
+  select(-hc_category.0) %>% t() %>% data.frame() %>% rename(hc_spend_pct = ".") %>% mutate(Spend_Category = row.names(.)) %>% select(Spend_Category, hc_spend_pct)
+
+# competition distribution
+competition_start_pct <- pdata %>% select_at(vars(matches("competition"))) %>% lapply(mean) %>% as.data.frame() %>% 
+  select(-competition.0) %>% t() %>% data.frame() %>% rename(competition_start_pct = ".") %>% mutate(Competition_Category = row.names(.)) %>% select(Competition_Category, competition_start_pct)
+
+# plot hc spend distirbution (mean pct distribution)
+hc_spend_pct %>% ggplot(aes(x = reorder(Spend_Category, hc_spend_pct), y = hc_spend_pct)) + 
+  geom_bar(stat = "identity", fill = "lightblue") + 
+  theme(axis.text.x = element_text(angle = 90)) +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent) +
+  xlab("Avg. HC Spend Percent") +
+  theme(legend.position="none") # remove redundant legend
+
+# plot category start distirbution (mean pct distribution)
+competition_start_pct %>% ggplot(aes(x = reorder(Competition_Category, competition_start_pct), y = competition_start_pct)) + 
+  geom_bar(stat = "identity", fill = "lightblue") + 
+  theme(axis.text.x = element_text(angle = 90)) +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent) +
+  xlab("Avg. Competition Start Percent") +
+  theme(legend.position="none") # remove redundant legend
+```
+
+## PCA
+
+```{r pca_exp, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(factoextra)
+cdata.small <- sample_n(cdata, 10000)
+cdata.small.princomp <- princomp(cdata.small)
+xbplot <- fviz_pca_ind(cdata.small.princomp, 
+                       col.ind = factor(cdata.small$vip),
+                       palette = "jco", 
+                       addEllipses = F, 
+                       label = "none",
+                       col.var = "black", 
+                       repel = T, 
+                       legend.title = "VIP")
+print(xbplot)
+fviz_contrib(cdata.small.princomp, choice = "var", axes = 1) + theme(axis.text.x = element_text(angle = 90))
+fviz_contrib(cdata.small.princomp, choice = "var", axes = 2) + theme(axis.text.x = element_text(angle = 90))
+fviz_contrib(cdata.small.princomp, choice = "var", axes = 3) + theme(axis.text.x = element_text(angle = 90))
+fviz_contrib(cdata.small.princomp, choice = "var", axes = 4) + theme(axis.text.x = element_text(angle = 90))
+```
+
+# Cluster Analysis
+## Determining the Number of Clusters
+
+```{r clustering, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# Clustering
+## Determine number of clusters to go with
+rm(list = setdiff(ls(), "cdata")); gc()
+try_centers <- seq(from = 3, to = 12, by = 1)
+
+## within sum squares to determine how many clusters to go with
+# clustering
+set.seed(123)
+wss_list <- foreach(k = try_centers) %do% { # forget parallel processing with this size of data not enough ram
+  print(k) # progress bar
+  c <- kmeans(cdata %>% select(-vip), centers = k, iter.max = 10, nstart = 1) 
+  # saveRDS(c, paste0("rds_files/clusters_loop/cluster", k, ".rds"))
+  # return(1)
+}
+
+# iters <- list.files("rds_files/clusters_loop", full.names = T)
+# wss_list <- foreach(i = iters) %do% {
+#    readRDS(i)
+# }
+
+saveRDS(wss_list, "rds_files/wss_list.rds")
+```
+
+
+```{r load_clustering, echo=FALSE, message=FALSE, warning=FALSE}
+try_centers <- seq(from = 3, to = 12, by = 1)
+wss_list <- readRDS("rds_files/wss_list.rds")
+
+## get wss from each iteration
+wss <- lapply(wss_list, function(i) i$tot.withinss) %>% unlist()
+
+## plot elbow chart
+plot(try_centers, wss) # looks like 8 is where the elbow is
+cluster8 <- wss_list[[6]] # choose 8 clusters based on elbow chart
+```
+
+## Analysis of Clustering Results
+
+```{r cluster_analysis_summary, echo=FALSE, message=FALSE, warning=FALSE}
+# save memory
+rm(list = setdiff(ls(), c("cluster8", "pdata"))); gc()
+
+# group by cluster table
+userbase_clustered <- readRDS("rds_files/pdata.rds") %>% mutate(cluster8 = cluster8$cluster)
+
+
+userbase_cluster_summary <- userbase_clustered %>% 
+  select(-c(hc_category.0, competition.0)) %>% 
+  group_by(cluster8) %>% 
+  summarise(n = n()) %>% 
+  inner_join(
+  userbase_cluster_summary <- userbase_clustered %>% 
+  select(-c(hc_category.0, competition.0)) %>% 
+  group_by(cluster8) %>% 
+  dplyr::summarise_at(vars(matches("(hc_category|competition)[.]"), tenure_days, veteran, vip, ltv_7d, avg_daily_sessions), mean),
+  by = "cluster8") %>% 
+  mutate_at(vars(-cluster8), round, 2) %>% 
+  mutate_at(vars(-cluster8), format, nsmall = 2)
+
+features <- names(userbase_cluster_summary)
+trans <- userbase_cluster_summary %>% t() %>% as.data.frame()
+trans$features <- features
+trans <- trans %>% select(features, everything())
+colnames(trans) <- c("Variable", userbase_cluster_summary$cluster8)
+
+trans %>%  DT::datatable(options = list(paging = F, searching = F), rownames = F)
+```
+
+
+```{r cluster_visualization, echo=FALSE, message=FALSE, warning=FALSE}
+cluster_visuals <- userbase_clustered %>% select(-c(hc_category.0, competition.0)) %>% mutate(cluster = factor(cluster8)) %>% 
+  group_by(cluster) %>% 
+  dplyr::summarise_at(vars(tenure_days:hc_category.PLAYER_SKILL_LEVEL_UP, -region), mean) %>% 
+  inner_join(
+    userbase_clustered %>% group_by(cluster8) %>% summarise(n = n()) %>% mutate(cluster = factor(cluster8)),
+    by = "cluster"
+  )
+
+cluster_visuals_raw <- userbase_clustered %>% mutate(cluster = factor(cluster8))
+
+# bubble plot of clusters
+## 7 Day Spend and avg daily sessions
+Sessions_bubble <- ggplot(cluster_visuals, aes(x = ltv_7d, y = avg_daily_sessions, color = cluster, size = n)) +
+  geom_point(alpha = 0.5) +
+  scale_size_continuous(range = c(2, 35), guide = 'none') +
+  labs(title = "Avg. Daily Sessions and 7 Day Spend")
+Sessions_bubble
+
+## VIPs
+vip_bubble <- ggplot(cluster_visuals, aes(x = ltv_7d, y = vip, color = cluster, size = n)) +
+  geom_point(alpha = 0.5) +
+  scale_size_continuous(range = c(2, 35), guide = 'none') +
+  labs(title = "Avg. VIP Count & 7 Day Spend")
+vip_bubble
+
+## Random opponent
+random_opponent_bubble <- ggplot(cluster_visuals, aes(x = ltv_7d, y = competition.RandomOpponent, color = cluster, size = n)) +
+  geom_point(alpha = 0.5) +
+  scale_size_continuous(range = c(2, 35), guide = 'none') +
+  labs(title = "Avg. Random Opponent Percent Distribution & 7 Day Spend")
+random_opponent_bubble
+
+## Competition Bonus
+competition_bonus_bubble <- ggplot(cluster_visuals, aes(x = ltv_7d, y = competition.Bonus, color = cluster, size = n)) +
+  geom_point(alpha = 0.5) +
+  scale_size_continuous(range = c(2, 35), guide = 'none') +
+  labs(title = "Avg. Competition Bonus Percent Distribution & 7 Day Spend")
+competition_bonus_bubble
+
+## HC draft pick
+hc_draft_bubble <- ggplot(cluster_visuals, aes(x = ltv_7d, y = `hc_category.Draft Pick`, color = cluster, size = n)) +
+  geom_point(alpha = 0.5) +
+  scale_size_continuous(range = c(2, 35), guide = 'none') +
+  labs(title = "Avg. Hard Currency Draft Pick & 7 Day Spend")
+hc_draft_bubble
+
+```

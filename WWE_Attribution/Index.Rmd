@@ -1,0 +1,241 @@
+---
+title: "WWE Extreme Attribution"
+output:
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Goal of Analysis
+
+
+```{r startup, echo=F, results = 'hide', message=F, cache=F}
+library(DBI)
+library(odbc)
+library(tidyverse)
+library(dbplyr)
+library(lubridate)
+library(CausalImpact)
+
+
+# source query and get dataframe
+con <- dbConnect(odbc(), "Athena")
+source("query.R")
+world <- dbGetQuery(con, world_query)
+rpi_7d <- dbGetQuery(con, revenue_7day)
+```
+
+
+```{r preprocessing, echo=F, eval=T}
+
+# world
+pdata_world <- world %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(all_installs:dau), as.numeric) %>% 
+  dplyr::select(organic_installs, everything()) %>% 
+  replace(is.na(.), 0)
+
+dates_world <- pdata_world$date
+
+# installs as target
+# pdata_world_covariates_ts <- zoo(pdata_world %>% dplyr::select(organic_installs, daily_spend), dates_world)
+pdata_world_ts <- zoo(pdata_world %>% dplyr::select(organic_installs), dates_world)
+
+# revenue as target
+# pdata_world_rev_covariates_ts <- zoo(pdata_world %>% dplyr::select(organic_revenue, daily_spend), dates_world)
+pdata_world_rev_ts <- zoo(pdata_world %>% dplyr::select(organic_revenue), dates_world)
+
+# DAU as target
+pdata_world_dau_ts <- zoo(pdata_world %>% dplyr::select(dau), dates_world)
+
+
+# evergreen vars
+pre.period <- as.Date(c("2019-06-13", "2019-06-23"))
+post.period <- as.Date(c("2019-06-24", "2019-07-15"))
+aug.pre.period <- as.Date(c("2019-07-28", "2019-08-04"))
+aug.post.period <- as.Date(c("2019-08-05", "2019-08-14"))
+
+# for ggplot extreme and other key events
+extreme_begin <- as.Date('2019-06-24')
+extreme_end <- as.Date('2019-07-14')
+extreme_overlay <- data.frame(start = extreme_begin, end = extreme_end)
+
+#aug tv
+aug_tv_begin <- as.Date('2019-08-05')
+aug_tv_end <- as.Date('2019-08-14')
+aug_tv_overlay <- data.frame(start = aug_tv_begin, end = aug_tv_end)
+
+WWE_usa_launch <- as.Date('2019-05-28')
+WWE_usa_launch_end <- as.Date('2019-05-30')
+usa_launch_overlay <- data.frame(start = WWE_usa_launch, end = WWE_usa_launch_end)
+```
+
+# Summary and Contextual Overview {.tabset .tabset-fade .tabset-pills}
+
+
+## Organic Installs
+```{r overview_installs, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Organic Install Trend
+pdata_world %>% dplyr::select(date, organic_installs) %>% 
+  ggplot(aes(x = date, y = organic_installs)) +
+  geom_line() +
+  geom_rect(data = extreme_overlay, inherit.aes = F,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf, ymax = Inf,
+                fill = "Extreme Rules"),
+            alpha = 0.1) +
+  geom_rect(data = usa_launch_overlay, inherit.aes = F,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf, ymax = Inf,
+                fill = "USA Launch"),
+            alpha = 0.1) +
+  geom_rect(data = aug_tv_overlay, inherit.aes = F,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf, ymax = Inf,
+                fill = "August TV & Arena"),
+            alpha = 0.1) +
+    scale_fill_manual(name = element_blank(), 
+                      values = c("Extreme Rules" = "black", 
+                                 "USA Launch" = "blue", 
+                                 "August TV & Arena" = "green"))
+```
+
+
+## Organic Revenue
+```{r overview_revenue, echo=FALSE}
+
+# Organic Revenue Trend
+pdata_world %>% dplyr::select(date, organic_revenue) %>% 
+  ggplot(aes(x = date, y = organic_revenue)) +
+  geom_line() +
+  geom_rect(data = extreme_overlay, inherit.aes = F,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf, ymax = Inf,
+                fill = "Extreme Rules"),
+            alpha = 0.1) +
+  geom_rect(data = usa_launch_overlay, inherit.aes = F,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf, ymax = Inf,
+                fill = "USA Launch"),
+            alpha = 0.1) +
+  geom_rect(data = aug_tv_overlay, inherit.aes = F,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf, ymax = Inf,
+                fill = "August TV & Arena"),
+            alpha = 0.1) +
+    scale_fill_manual(name = element_blank(), 
+                      values = c("Extreme Rules" = "black", 
+                                 "USA Launch" = "blue", 
+                                 "August TV & Arena" = "green"))
+```
+
+## DAU (All)
+```{r overview_dau, echo=FALSE}
+
+# Organic Revenue Trend
+pdata_world %>% dplyr::select(date, dau) %>% 
+  ggplot(aes(x = date, y = dau)) +
+  geom_line() +
+  scale_y_continuous(labels = scales::comma) +
+  geom_rect(data = extreme_overlay, inherit.aes = F,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf, ymax = Inf,
+                fill = "Extreme Rules"),
+            alpha = 0.1) +
+  geom_rect(data = usa_launch_overlay, inherit.aes = F,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf, ymax = Inf,
+                fill = "USA Launch"),
+            alpha = 0.1) +
+  geom_rect(data = aug_tv_overlay, inherit.aes = F,
+            aes(xmin = start, xmax = end,
+                ymin = -Inf, ymax = Inf,
+                fill = "August TV & Arena"),
+            alpha = 0.1) +
+    scale_fill_manual(name = element_blank(), 
+                      values = c("Extreme Rules" = "black", 
+                                 "USA Launch" = "blue", 
+                                 "August TV & Arena" = "green"))
+```
+
+# Attribution Modelling {.tabset .tabset-fade .tabset-pills}
+
+
+## Organic Installs
+```{r CasualImpact_TS_Only, echo=F}
+impact_world_ts_only <- CausalImpact(pdata_world_ts, pre.period, post.period)
+plot(impact_world_ts_only)
+summary(impact_world_ts_only)
+# summary(impact_world_ts_only, "report")
+```
+
+## Organic Revenue
+```{r CasualImpact_revenue, echo=F}
+revenue_impact_world_ts_only <- CausalImpact(pdata_world_rev_ts, pre.period, post.period)
+plot(revenue_impact_world_ts_only)
+summary(revenue_impact_world_ts_only)
+# summary(revenue_impact_world_ts_only, "report")
+```
+
+## DAU
+```{r CasualImpact_dau, echo=F}
+dau_impact_world_ts_only <- CausalImpact(pdata_world_dau_ts, pre.period, post.period)
+plot(dau_impact_world_ts_only)
+summary(dau_impact_world_ts_only)
+```
+
+
+# Cost Per Install
+
+CPI for paid installs does decrease for the Extreme Rules time period overall. The trend chart shows this visibly starting to decline when Extreme Rules begins.
+```{r cpi, echo=F, warning=FALSE}
+# Overall CPI
+pdata_world %>% mutate(period = if_else(date >= '2019-06-13' & date <= '2019-06-24', "pre_period",
+                                        if_else(date >= '2019-06-25' & date <= '2019-07-14', "post_period", "other"))) %>% 
+  group_by(period) %>% 
+  filter(period != "other") %>% 
+  summarise(TotalSpend = sum(daily_spend),
+            TotalPaidInstalls = sum(paid_installs)) %>% 
+  mutate(CPI = scales::dollar(TotalSpend / TotalPaidInstalls),
+         TotalSpend = scales::dollar(TotalSpend))
+
+
+# CPI daily trend
+pdata_world %>% mutate(CPI = daily_spend / paid_installs) %>% 
+  ggplot(aes(x = date, y = CPI)) +
+  geom_line() +
+  scale_y_continuous(labels = scales::dollar) +
+  geom_rect(data = extreme_overlay, inherit.aes = F,
+          aes(xmin = start, xmax = end,
+              ymin = -Inf, ymax = Inf,
+              fill = "Extreme Rules"),
+          alpha = 0.1) +
+  geom_rect(data = usa_launch_overlay, inherit.aes = F,
+          aes(xmin = start, xmax = end,
+              ymin = -Inf, ymax = Inf,
+              fill = "USA Launch"),
+          alpha = 0.1) +
+  scale_fill_manual(name = element_blank(), values = c("Extreme Rules" = "black", "USA Launch" = "blue"))
+```
+
+
+```{r organic_ltv, echo=F}
+# cbind onto query of 7day ltv
+rpi_7d %>% mutate(attributed_organic_installs = impact_world_ts_only$summary$AbsEffect[2],
+                  estimated_RPI_365_ltv_3x_multiplier = rpi_7day * 3) %>% 
+  mutate(estimated_total_organic_revenue = estimated_RPI_365_ltv_3x_multiplier * attributed_organic_installs) %>% 
+  mutate(revenue_7_day = scales::dollar(revenue_7_day),
+         rpi_7day = scales::dollar(rpi_7day),
+         estimated_RPI_365_ltv_3x_multiplier = scales::dollar(estimated_RPI_365_ltv_3x_multiplier),
+         estimated_total_organic_revenue = estimated_total_organic_revenue) %>%
+  mutate(estimated_total_organic_revenue_plus_ads_revenu =scales::dollar(1.34 * estimated_total_organic_revenue)) %>% t()
+```
+

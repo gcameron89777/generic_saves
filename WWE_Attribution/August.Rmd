@@ -1,0 +1,43 @@
+---
+title: "WWE Extreme Attribution"
+output:
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# August TV and Arena Impact
+
+## Organic Installs August
+```{r CasualImpact_Aug_TS_Only, echo=F}
+aug_impact_world_ts_only <- CausalImpact(pdata_world_ts, aug.pre.period, aug.post.period)
+plot(aug_impact_world_ts_only)
+summary(aug_impact_world_ts_only)
+# summary(aug_impact_world_ts_only, "report")
+```
+
+
+## Organic Revenue August
+```{r CasualImpact_Aug_Rev_Only, echo=F}
+aug_impact_world_rev_ts_only <- CausalImpact(pdata_world_rev_ts, aug.pre.period, aug.post.period)
+plot(aug_impact_world_rev_ts_only)
+summary(aug_impact_world_rev_ts_only)
+# summary(aug_impact_world_rev_ts_only, "report")
+```
+
+
+## Organic DAU August
+```{r CasualImpact_Aug_dau_Only, echo=F}
+aug_impact_world_dau_ts_only <- CausalImpact(pdata_world_dau_ts, aug.pre.period, aug.post.period)
+plot(aug_impact_world_dau_ts_only)
+summary(aug_impact_world_dau_ts_only)
+# summary(aug_impact_world_dau_ts_only, "report")
+```
+
