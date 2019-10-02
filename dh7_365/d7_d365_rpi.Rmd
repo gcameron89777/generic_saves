@@ -1,0 +1,616 @@
+---
+  title: "Sample Analysis"
+subtitle: "Day 7 to day 365 analysis"
+date: "`r Sys.Date()`"
+author: "Gavin Cameron"
+output:
+  tufte::tufte_html:
+  toc: true
+toc_collapsed: true
+df_print: kable
+link-citations: yes
+---
+  
+```{r setup, include=FALSE}
+library(tufte)
+library(tidyverse)
+library(lubridate)
+library(foreach)
+library(doParallel) # includes package just parallel
+library(scales)
+library(kableExtra)
+
+```
+
+```{r preprocessing, echo=F, message=FALSE, warning=FALSE, cache=F, results='hide'}
+
+# conflicts
+select <- dplyr::select
+
+# read in data
+# rawd <- readRDS("_rds/raw_data.rds")
+# raw_spend <- readRDS("_rds/spend_data.rds")
+
+pdata <- readRDS("_rds/raw_data.rds") %>% 
+  filter(d365_RPI > 0) %>%  # only include those with spend
+  mutate(avg_rating_received = replace_na(avg_rating_received, 0),
+         d365_RPI = round(d365_RPI / 100, 2)) %>% 
+  filter(d365_RPI <= 2000) %>%  # filter out extremely high spenders
+  
+  # design submissions count
+  mutate(submissions_bin = if_else(submissions < 10, "<10",
+                                   if_else(submissions < 20, "<20",
+                                           if_else(submissions < 40, "<40", ">40")))) %>% 
+  mutate(submissions_bin = factor(submissions_bin, levels = c("<10", "<20", "<40", ">40"))) %>% 
+  
+  # star ratings received avg
+  mutate(stars_received_bin = if_else(avg_rating_received == 0, "0 / None",
+                                      if_else(avg_rating_received < 3.5, "<3.5",
+                                              if_else(avg_rating_received < 4, "<4",
+                                                      if_else(avg_rating_received < 4.5, "<4.5", ">4.5"))))) %>% 
+  mutate(stars_received_bin = factor(stars_received_bin, levels = c("0 / None", "<3.5", "<4", "<4.5", ">4.5")))
+```
+
+# Introduction
+The purpose of this analysis is to understand day 7 (d7) player variables and how they relate to day 365 (d365) revenue per install (RPI).
+Following exploratory analysis, a statistical model will identify those features which are significant as well as the magnitude of their impact.
+
+# Exploratory Analysis
+## Summary of Data
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+## Distribution of Spend
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r, d365_RPI_distribution, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+ggplot(pdata, aes(x = d365_RPI)) +
+  geom_histogram(fill = 'lightblue') +
+  labs(title = 'Distribution of Day 365 RPI') +
+  scale_x_continuous(labels = comma)
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r, log_d365_RPI_distribution, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+ggplot(pdata, aes(x = log(d365_RPI))) +
+  geom_histogram(fill = 'lightblue') +
+  labs(title = 'Distribution of log of Day 365 RPI')
+```
+
+
+## Binary Variables
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_usa, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+pdata %>% 
+  group_by(united_states) %>% 
+  summarise(N = scales::comma(n()),
+            Avg_d365_RPI = round(mean(d365_RPI), 0)) %>% 
+  kable(align = c("l", "r", "r"))
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_fb_connected, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+pdata %>%
+  group_by(facebook_connected) %>%
+  summarise(N = scales::comma(n()),
+            Avg_d365_RPI = round(mean(d365_RPI), 0)) %>% 
+  kable(align = c("l", "r", "r"))
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_paid_source, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+pdata %>%
+  group_by(paid_source) %>%
+  summarise(N = scales::comma(n()),
+            Avg_d365_RPI = round(mean(d365_RPI), 0)) %>% 
+  kable(align = c("l", "r", "r"))
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_returner, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+pdata %>%
+  group_by(returner) %>%
+  summarise(N = scales::comma(n()),
+            Avg_d365_RPI = round(mean(d365_RPI), 0)) %>% 
+  kable(align = c("l", "r", "r"))
+```
+
+## Numeric Variables
+```{marginfigure}
+As number of sessions increase during the first week, so does d365 RPI.
+```
+
+```{r explore_sessions, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+pdata %>% sample_n(10000) %>% 
+  ggplot(aes(x = sessions, y = d365_RPI)) +
+  geom_point(color = "lightblue", alpha = 0.5) +
+  geom_smooth(method = "lm", se = F, color = 'grey')
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_submissions, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+pdata %>% sample_n(10000) %>% 
+  ggplot(aes(x = submissions, y = d365_RPI)) +
+  geom_point(color = "lightblue", alpha = 0.5) +
+  geom_smooth(method = "lm", se = F, color = 'grey')
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_avg_rating_received, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(pdata, aes(x = avg_rating_received)) +
+  geom_histogram(fill = 'lightblue') +
+  labs(title = 'Distribution of Rating Received')
+
+pdata %>% filter(avg_rating_received >= 3) %>% sample_n(10000) %>% 
+  ggplot(aes(x = avg_rating_received, y = d365_RPI)) +
+  geom_point(color = "lightblue", alpha = 0.5) +
+  geom_smooth(method = "lm", se = F, color = 'grey')
+```
+
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_2d_sessions_fb, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+pdata %>% sample_n(100000) %>% 
+  ggplot(aes(x = sessions, y = d365_RPI)) +
+  geom_point(color = "lightblue", alpha = 0.5) +
+  geom_smooth(method = "lm", se = F, aes(color = factor(facebook_connected))) +
+  theme(legend.position = "top") +
+  labs(color = "Facebook Connected")
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_3d_sessions_fb_submissions, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+pdata %>% 
+  sample_n(100000) %>% 
+  ggplot(aes(x = sessions, y = d365_RPI)) +
+  geom_point(color = "lightblue", alpha = 0.5) +
+  geom_smooth(method = "lm", se = F, aes(color = factor(facebook_connected))) +
+  facet_grid(cols = vars(submissions_bin)) +
+  theme(legend.position = "top") +
+  labs(title = "Avg. Daily Sessions & d365 RPI",
+       subtitle = "Count of design submissions as columns",
+       color = "Facebook Connected")
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_3d_sessions_fb_stars, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+pdata %>% 
+  sample_n(100000) %>% 
+  ggplot(aes(x = sessions, y = d365_RPI)) +
+  geom_point(color = "lightblue", alpha = 0.5) +
+  geom_smooth(method = "lm", se = F, aes(color = factor(facebook_connected))) +
+  facet_grid(cols = vars(stars_received_bin)) +
+  theme(legend.position = "top") +
+  labs(title = "Avg. Daily Sessions & d365 RPI",
+       subtitle = "Average star rating received as columns",
+       color = "Facebook Connected")
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_4d_sessions_fb_submissions_stars, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+pdata %>% 
+  ggplot(aes(x = sessions, y = d365_RPI)) +
+  geom_point(color = "lightblue", alpha = 0.5) +
+  geom_smooth(method = "lm", se = F, aes(color = factor(facebook_connected))) +
+  facet_grid(cols = vars(submissions_bin),
+             rows = vars(reorder(stars_received_bin, desc(stars_received_bin)))) +
+  theme(legend.position = "top") +
+  labs(title = "Avg. Daily Sessions & d365 RPI",
+       subtitle = "Count of design submissions as columns and avg rating received as rows",
+       color = "Facebook Connected")
+```
+
+## Spend Distribution
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_spend_distribution, fig.cap = " ", echo=FALSE, message=FALSE, warning=FALSE}
+
+# don't store as a var, save memory
+readRDS("_rds/spend_data.rds") %>% 
+  group_by(category_name) %>% 
+  summarise(`Spend Distribution Avg` = mean(pct_spend)) %>% 
+  ggplot(aes(x = reorder(category_name, -`Spend Distribution Avg`), y = `Spend Distribution Avg`)) +
+  geom_bar(stat = 'identity', fill = 'lightblue') +
+  labs(x = 'Spend Item Category',
+       y = 'Percent Spend Distribution',
+       title = 'Item Category Spend Distribution') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r explore_spend_distribution_matrix, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+pdata %>% 
+  left_join(readRDS("_rds/spend_data.rds") , by = "covet_id") %>% 
+  replace(., is.na(.), 0) %>% 
+  filter(category_name != 0) %>% 
+  mutate(category_name = str_wrap(category_name, width = 20)) %>% 
+  ggplot(aes(x = pct_spend, y = d365_RPI)) +
+  geom_point(color = 'lightblue', alpha = 1/20) +
+  geom_smooth(method = "lm", se = F, color = 'grey') +
+  facet_wrap(~ category_name) +
+  scale_y_continuous(limits = c(0, NA)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+# Statistical Modeling
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+```{r join_pdata_spend, echo=FALSE, message=FALSE, warning=FALSE}
+
+# combine spend data (at the player level, spread spend as columns)
+pdata <- pdata %>% 
+  left_join(readRDS("_rds/spend_data.rds") %>% 
+              mutate(category_name = paste0("Spend Distr ", category_name)) %>% 
+              spread(key = category_name, value = pct_spend, fill = 0), 
+            by = "covet_id") %>% 
+  replace(., is.na(.), 0)
+```  
+
+## Model Fit & Log Transformations
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r statistical_modeling_initial_optic, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+# models
+# try full models
+model_full <- lm(d365_RPI ~., data = pdata %>% select_at(vars(-c(covet_id, install_date, matches("bin")))))
+model_no_spend_distribution <- lm(d365_RPI ~., data = pdata %>% select_at(vars(-c(covet_id, install_date, matches("bin|distr")))))
+model_full_log <- lm(log(d365_RPI) ~., data = pdata %>% select_at(vars(-c(covet_id, install_date, matches("bin")))))
+model_no_spend_distribution_log <- lm(log(d365_RPI) ~., data = pdata %>% select_at(vars(-c(covet_id, install_date, matches("bin|distr")))))
+
+# compare models
+eval_mods <- list(model_full = model_full, 
+                  model_no_spend_distribution = model_no_spend_distribution,
+                  model_full_log = model_full_log,
+                  model_no_spend_distribution_log = model_no_spend_distribution_log) %>% 
+  imap_dfr(broom::glance, .id = "model_name") %>% 
+  select(model_name, adj.r.squared, AIC)
+
+# print out
+eval_mods %>% 
+  kable(align = c("l", "r", "r"))
+```
+
+```{r vif, eval=FALSE, fig.cap=" ", message=FALSE, warning=FALSE, include=FALSE}
+# check for evidence of multicolinearity ad remove any features above 5
+rms::vif(model_full_log) %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(.) %>% 
+  rename("variable" = "rowname",
+         "vif" = ".") %>% 
+  kable(align = c("l", "r"))
+
+# save memory
+rm(list = setdiff(ls(), "pdata"))
+invisible(gc())
+```
+
+## Cross Validation
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+```{r cross_validation, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+library(caret)
+
+# cross validation
+## tuning & parameters
+set.seed(123)
+train_control <- trainControl(
+  method = "cv", # cross validation
+  number = 10, # 10 folds
+  savePredictions = "final",
+  verboseIter = F
+)
+
+# full model
+model_full_log <- train(
+  x = pdata %>% select_at(vars(-c(covet_id, install_date, matches("bin")))),
+  y = log(pdata$d365_RPI),
+  method = "lm",
+  trControl = train_control,
+  metric = "RMSE"
+)
+
+# quadratic terms
+model_quadratic_log <- train(
+  x = pdata %>% select_at(vars(-c(covet_id, install_date, matches("bin")))) %>% 
+    mutate(submissionsSqd = submissions^2,
+           sessionsSqd = sessions^2,
+           avg_rating_receivedSqd = avg_rating_received^2),
+  y = log(pdata$d365_RPI),
+  method = "lm",
+  trControl = train_control,
+  metric = "RMSE"
+)
+
+# interaction terms
+model_interaction_log <- train(
+  x = pdata %>% select_at(vars(-c(covet_id, install_date, matches("bin")))) %>% 
+    mutate(fb_x_sessions = facebook_connected * sessions,
+           fb_x_paid_source = facebook_connected * paid_source,
+           fb_x_united_states = facebook_connected * united_states),
+  y = log(pdata$d365_RPI),
+  method = "lm",
+  trControl = train_control,
+  metric = "RMSE"
+)
+
+# combo both interactions and quadratic terms
+model_combo_log <- train(
+  x = pdata %>% 
+    select_at(vars(-c(covet_id, install_date, matches("bin")))) %>% 
+    mutate(submissionsSqd = submissions^2,
+           sessionsSqd = sessions^2,
+           avg_rating_receivedSqd = avg_rating_received^2,
+           fb_x_sessions = facebook_connected * sessions,
+           fb_x_united_states = facebook_connected * united_states,
+           fb_x_paid_source = facebook_connected * paid_source),
+  y = log(pdata$d365_RPI),
+  method = "lm",
+  trControl = train_control,
+  metric = "RMSE"
+)
+
+# tuned model, combo model then remove insignificant features
+model_refined_log <- train(
+  x = pdata %>% 
+    select_at(vars(-c(covet_id, install_date, matches("bin")))) %>% 
+    
+    # minus distribution features found to be insignificant
+    select_at(vars(-c(`Spend Distr Wall Art`, `Spend Distr Table Art`, `Spend Distr Poufs`, `Spend Distr Kids' Floor Decor`))) %>% 
+    mutate(submissionsSqd = submissions^2,
+           sessionsSqd = sessions^2,
+           avg_rating_receivedSqd = avg_rating_received^2,
+           fb_x_sessions = facebook_connected * sessions,
+           fb_x_united_states = facebook_connected * united_states),
+  y = log(pdata$d365_RPI),
+  method = "lm",
+  trControl = train_control,
+  metric = "RMSE"
+)
+
+# compare models
+results <- resamples(list(
+  model_full = model_full_log,
+  model_quadratic = model_quadratic_log,
+  model_interaction = model_interaction_log,
+  model_combo = model_combo_log,
+  model_refined = model_refined_log
+))
+
+summary(results)$statistics$RMSE %>% 
+  as.data.frame() %>% 
+  select(Mean) %>%
+  rename(RMSE = Mean) %>% 
+  kable(align = c("l", "r"))
+dotplot(results)
+```
+
+## Final Model Coefficients
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r model_coefficients_regular, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+broom::tidy(model_refined_log$finalModel) %>% 
+  filter(term != "(Intercept)" & !str_detect(term, "Distr")) %>%  # log level model, meaningless intercept. Move Spend distribution tables to bottom
+  bind_rows(broom::tidy(model_refined_log$finalModel) %>% 
+              filter(term != "(Intercept)" & str_detect(term, "Distr"))) %>% 
+  mutate(`transformed estimate` = if_else(str_detect(term, "Distr"), exp(.$estimate) - 1, (exp(.$estimate) - 1) * 100)) %>%
+  select(term, estimate, `transformed estimate`, everything()) %>% 
+  mutate_at(vars(estimate, `transformed estimate`, std.error:p.value), funs(scales::comma(., accuracy = 0.0001))) %>%
+  rename_at(vars(`transformed estimate`), str_wrap, width = 15) %>% 
+  kable(align = c("l", "r", "r", "r", "r", "r"))
+```
+
+## Sample Model Output
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+```{r sample_output, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+library(statisticalModeling)
+
+model_dat <- pdata %>% 
+  select_at(vars(-c(covet_id, install_date, matches("bin")))) %>% 
+  
+  # minus distribution features found to be insignificant
+  select_at(vars(-c(`Spend Distr Wall Art`, `Spend Distr Table Art`, `Spend Distr Poufs`, `Spend Distr Kids' Floor Decor`))) %>% 
+  
+  # add in transformations
+  mutate(submissionsSqd = submissions^2,
+         sessionsSqd = sessions^2,
+         avg_rating_receivedSqd = avg_rating_received^2,
+         fb_x_sessions = facebook_connected * sessions,
+         fb_x_united_states = facebook_connected * united_states)
+
+nms <- names(model_dat)
+no_spcs <- nms %>% str_replace_all(" ", "_")
+names(model_dat) <- no_spcs
+
+# replicate refined model outside of caret because even using $finalModel doesn't work with this package
+lm_model_refined_log <- lm(log(d365_RPI) ~., data = model_dat)
+
+set.seed(123)
+evaluate_model(lm_model_refined_log, 
+               data = model_dat %>% sample_n(20)) %>%  # median
+  mutate(Predicted_d365_RPI = scales::dollar(exp(model_output))) %>% 
+  select(d365_RPI, Predicted_d365_RPI, everything()) %>% 
+  mutate(d365_RPI = scales::dollar(d365_RPI)) %>% 
+  DT::datatable(options = list(paging = F, searching = F), rownames = F)
+```
+
+## Effect Size
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+Increasing Sessions
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r effect_size_sessions, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+effect_size(lm_model_refined_log, ~ sessions) %>% 
+  mutate(slope = (exp(slope) - 1) * 100) %>% 
+  t()
+```
+
+Increasing Submissions
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r effect_size_submissions, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+effect_size(lm_model_refined_log, ~ submissions) %>% 
+  mutate(slope = (exp(slope) - 1) * 100)  %>% 
+  t()
+```
+
+Switching Facebook Connected to True
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r effect_size_fb, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+effect_size(lm_model_refined_log, ~ facebook_connected, facebook_connected = 0, to = 1) %>% 
+  mutate(slope = (exp(slope) - 1) * 100)  %>% 
+  t()
+```
+
+Switching Paid Source to True
+```{marginfigure}
+Switching from organic to paid source with the given level of sample inputs decreases expected d365 RPI by 3.6%
+```
+
+```{r effect_size_paid, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+effect_size(lm_model_refined_log, ~ paid_source, paid_source = 0, to = 1) %>% 
+  mutate(slope = (exp(slope) - 1) * 100)  %>% 
+  t()
+```
+
+## Model Visualization
+
+Visualizing the model helps illustrate the patterns and relationships fopund in the data by the model.
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r model_viz, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+
+# prepare dataframe
+pdata <- pdata %>% mutate(
+  predictions = predict(lm_model_refined_log, newdata = model_dat) %>% exp()
+) %>% 
+  select(covet_id, d365_RPI, predictions, everything())
+
+# visualize sessions and predicted rpi
+pdata %>% group_by(sessions) %>% summarise(avg_predicted_rpi = mean(predictions)) %>% 
+  ggplot(aes(x = sessions, y = avg_predicted_rpi)) +
+  geom_line(color = "lightblue") +
+  scale_x_continuous(limits = c(0, 150)) +
+  labs(title = "Sessions")
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r model_viz_fb, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+
+# visualize sessions and predicted rpi
+pdata %>% 
+  mutate(facebook_connected = factor(facebook_connected)) %>% 
+  group_by(sessions, facebook_connected) %>% summarise(avg_predicted_rpi = mean(predictions)) %>% 
+  ggplot(aes(x = sessions, y = avg_predicted_rpi)) +
+  geom_line(aes(color = facebook_connected)) +
+  scale_x_continuous(limits = c(0, 150)) +
+  labs(title = "Sessions & Facebook")
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r model_viz_fb_subs, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+
+# visualize sessions and predicted rpi
+pdata %>% 
+  mutate(facebook_connected = factor(facebook_connected)) %>% 
+  group_by(sessions, facebook_connected, submissions_bin) %>% summarise(avg_predicted_rpi = mean(predictions)) %>% 
+  ggplot(aes(x = sessions, y = avg_predicted_rpi)) +
+  geom_line(aes(color = facebook_connected)) +
+  scale_x_continuous(limits = c(0, 150)) +
+  facet_grid(cols = vars(submissions_bin)) +
+  labs(title = "Sessions, Facebook & Count of Submissions as Columns")
+```
+
+```{marginfigure}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+```
+
+```{r model_viz_fb_subs_ratings, echo=FALSE, fig.cap=" ", message=FALSE, warning=FALSE}
+
+# visualize sessions and predicted rpi
+pdata %>% 
+  mutate(facebook_connected = factor(facebook_connected)) %>% 
+  group_by(sessions, facebook_connected, submissions_bin, stars_received_bin) %>% summarise(avg_predicted_rpi = mean(predictions)) %>% 
+  ggplot(aes(x = sessions, y = avg_predicted_rpi)) +
+  geom_line(aes(color = facebook_connected)) +
+  scale_x_continuous(limits = c(0, 150)) +
+  facet_grid(cols = vars(submissions_bin),
+             rows = vars(reorder(stars_received_bin, desc(stars_received_bin)))) +
+  labs(title = "Sessions, Facebook & Count of Submissions as Columns, Avg rating as Rows")
+```
+
+# Input Output RPI App
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+```{r, example_shiny_app, echo=FALSE}
+knitr::include_url("http://shiny_app_url_here/",
+                   height = "800px")
+```
